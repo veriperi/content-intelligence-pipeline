@@ -1,0 +1,13 @@
+# Copy to ~/.dbt/profiles.yml (or wherever DBT_PROFILES_DIR points) and fill in real values.
+content_intelligence_pipeline:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: localhost
+      user: postgres
+      password: postgres
+      port: 5432
+      dbname: content_pipeline
+      schema: public
+      threads: 4
