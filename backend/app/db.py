@@ -13,15 +13,13 @@ engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
 
 @contextmanager
 def get_conn():
-    conn = engine.connect()
-    try:
+    # engine.begin() opens a connection inside an active transaction that
+    # auto-commits on success and auto-rolls-back on exception — this works
+    # identically across SQLAlchemy 1.4.x and 2.0.x, unlike calling
+    # .commit()/.rollback() directly on a plain .connect() connection, whose
+    # behavior differs between those two versions.
+    with engine.begin() as conn:
         yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
 
 def insert_podcast_raw(conn, source, query_term, itunes_id, feed_url, raw_json: dict):
@@ -83,3 +81,4 @@ def insert_llm_enrichment_raw(conn, episode_raw_id, model, prompt_version, reque
             "latency_ms": latency_ms,
         },
     )
+    

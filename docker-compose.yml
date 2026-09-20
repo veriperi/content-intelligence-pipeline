@@ -35,5 +35,34 @@ services:
     volumes:
       - ./backend:/app
 
+  airflow:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    container_name: content_pipeline_airflow
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/content_pipeline
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      # Airflow's OWN internal bookkeeping database (DAG runs, task states,
+      # etc) — separate from DATABASE_URL above, which is our pipeline's
+      # actual data. Using Postgres here instead of SQLite avoids
+      # SQLite's "database is locked" errors when multiple Airflow
+      # processes (webserver, scheduler) write concurrently.
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:postgres@postgres:5432/airflow_metadata
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/profiles.yml:/home/airflow/.dbt/profiles.yml
+      - airflow_logs:/opt/airflow/logs
+    entrypoint: /entrypoint.sh
+
 volumes:
   pgdata:
+  airflow_logs:

@@ -1,0 +1,7 @@
+requests
+feedparser
+openai
+python-dotenv
+pydantic
+psycopg[binary]
+sqlalchemy

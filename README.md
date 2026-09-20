@@ -3,11 +3,11 @@
 An end-to-end data platform that ingests podcast/feed metadata from public
 sources, enriches it with an LLM (categorization, entity extraction, data
 quality scoring), and transforms it through a Bronze → Silver → Gold
-pipeline into analytics-ready tables — surfaced on a live dashboard.
+pipeline into analytics-ready tables, surfaced on a live dashboard.
 
 This isn't a CRUD app. It mirrors real content/media data operations work:
 ingesting messy semi-structured feed data, validating and normalizing it,
-and turning it into structured metrics a business can act on — with an LLM
+and turning it into structured metrics a business can act on, with an LLM
 doing the categorization and quality-scoring work that would otherwise be
 manual.
 
@@ -24,7 +24,7 @@ Refreshes automatically as new data flows through the pipeline.
 
 ## Key finding: publisher genres don't reliably reflect actual content
 
-The most interesting result from this pipeline wasn't a metric — it was a
+The most interesting result from this pipeline wasn't a metric. It was a
 mismatch. Every episode from podcasts that publishers themselves labeled
 **"Science"** on iTunes got re-categorized by the LLM into something else
 entirely: Health, Technology, Education, or Society & Culture. Not a single
@@ -33,7 +33,7 @@ one matched "Science."
 ![Category mismatch](screenshots/category_mismatch.png)
 
 This shows that publisher-declared genre tags are too broad or inconsistent
-to rely on for accurate content classification — and that reading actual
+to rely on for accurate content classification, and that reading actual
 episode content (which the LLM enrichment step does) surfaces a materially
 more accurate picture. This has direct implications for content search,
 recommendation, and catalog organization.
@@ -51,7 +51,7 @@ score with a one-line justification.
 
 Aggregating LLM quality scores by publisher surfaces exactly the kind of
 "which feeds need attention" signal a real feed/content operations team
-would use — directly analogous to feed health monitoring work.
+would use, directly analogous to feed health monitoring work.
 
 ![Publisher quality](screenshots/publisher_quality.png)
 
@@ -63,45 +63,36 @@ constraints, and valid value ranges (e.g. quality scores must fall between
 
 ![dbt tests passing](screenshots/dbt_tests_passing.png)
 
+## Orchestrated with Apache Airflow
+
+The full pipeline (ingest, enrich, dbt Silver, dbt Gold, dbt test)
+runs as a single Airflow DAG, containerized with a dedicated Postgres
+metadata database (rather than SQLite) so the scheduler and webserver can
+run concurrently without the locking issues SQLite hits under real load.
+Every task completes successfully end-to-end.
+
+![Airflow DAG success](screenshots/airflow_dag_success.png)
+
 ## Architecture
 
-```
-                    iTunes Search API (podcast discovery)
-                                │
-                                ▼
-                    Podcast RSS feeds (episode data)
-                                │
-                                ▼
-                        FastAPI ingestion layer
-                                │
-                                ▼
-                  ┌─────────────────────────┐
-                  │   BRONZE (PostgreSQL)     │   raw, untouched, append-only
-                  │   podcasts_raw            │
-                  │   episodes_raw            │
-                  │   llm_enrichment_raw      │
-                  └─────────────┬─────────────┘
-                                │
-                          Groq LLM enrichment
-                (categorization, entities, quality scoring)
-                                │
-                                ▼
-                  ┌─────────────────────────┐
-                  │   SILVER (dbt models)     │   cleaned, deduplicated,
-                  │   silver_podcasts         │   normalized, validated
-                  │   silver_episodes         │
-                  │   silver_episode_enrichment│
-                  └─────────────┬─────────────┘
-                                │
-                  ┌─────────────────────────┐
-                  │   GOLD (dbt models)        │   business-ready aggregates
-                  │   gold_daily_content_health│
-                  │   gold_category_distribution│
-                  │   gold_publisher_quality   │
-                  └─────────────┬─────────────┘
-                                │
-                                ▼
-                       Streamlit Dashboard
+```mermaid
+flowchart TD
+    A[iTunes Search API<br/>podcast discovery] --> B[Podcast RSS feeds<br/>episode data]
+    B --> C[FastAPI ingestion layer]
+    C --> D[("BRONZE - PostgreSQL<br/>raw, untouched, append-only<br/>podcasts_raw, episodes_raw, llm_enrichment_raw")]
+    D --> E[Groq LLM enrichment<br/>categorization, entities, quality scoring]
+    E --> F[("SILVER - dbt models<br/>cleaned, deduplicated, validated<br/>silver_podcasts, silver_episodes, silver_episode_enrichment")]
+    F --> G[("GOLD - dbt models<br/>business-ready aggregates<br/>gold_daily_content_health, gold_category_distribution, gold_publisher_quality")]
+    G --> H[Streamlit Dashboard]
+
+    I[Apache Airflow] -.orchestrates.-> C
+    I -.orchestrates.-> E
+    I -.orchestrates.-> F
+    I -.orchestrates.-> G
+
+    style D fill:#cd7f32,color:#fff
+    style F fill:#c0c0c0,color:#000
+    style G fill:#ffd700,color:#000
 ```
 
 ## Tech stack
@@ -187,11 +178,18 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-### 6. (Optional) Run Airflow
-Point the Airflow `dags_folder` at `airflow/dags/`, ensure the `app` package
-and `dbt` project are importable inside the Airflow environment, then
-trigger `content_intelligence_pipeline` from the Airflow UI to run the full
-ingest → enrich → dbt run → dbt test flow on a schedule.
+### 6. Run Airflow (containerized, with Postgres backend)
+```bash
+# One-time: create Airflow's own metadata database inside Postgres
+docker exec content_pipeline_db psql -U postgres -c "CREATE DATABASE airflow_metadata;"
+
+docker compose build airflow
+docker compose up -d airflow
+```
+Wait ~60-90 seconds for first-time initialization, then open
+`http://localhost:8080` and log in with `admin` / `admin`. Unpause
+`content_intelligence_pipeline`, then trigger it from the UI to run the
+full ingest → enrich → dbt run → dbt test flow end-to-end.
 
 ## Data quality metrics tracked
 
@@ -215,12 +213,12 @@ issues, each fixed deliberately rather than papered over:
   required a full C++ build toolchain. Standardized on Python 3.12 in an
   isolated `venv` per component instead.
 - **LLM provider swap**: originally scoped for OpenAI, switched to Groq's
-  free tier via its OpenAI-compatible endpoint — a two-line config change
+  free tier via its OpenAI-compatible endpoint, a two-line config change
   (`base_url` + model name), demonstrating that the enrichment layer is
   provider-agnostic by design.
 - **Schema naming**: dbt's default schema behavior appends the configured
   schema to the connection's base schema (`public_silver`, `public_gold`)
-  rather than replacing it — worth knowing when querying dbt output directly.
+  rather than replacing it. Worth knowing when querying dbt output directly.
 
 ## Roadmap / possible extensions
 
@@ -229,4 +227,3 @@ issues, each fixed deliberately rather than papered over:
 - Swap iTunes Search for the Podcast Index API for richer metadata
 - Add a vision-model step to flag low-quality/placeholder podcast artwork
 - Move from daily batch ingestion to incremental polling for new episodes
-
