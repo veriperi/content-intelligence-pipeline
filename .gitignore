@@ -7,4 +7,4 @@ dbt_packages/
 target/
 logs/
 .DS_Store
-test_groq.py
+test_groq.pydbt/profiles.yml

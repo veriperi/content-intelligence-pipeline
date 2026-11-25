@@ -14,6 +14,7 @@ transformation happens in dbt, which is what gives you a clean story about
 *why* the architecture is laid out the way it is when someone interviews you.
 """
 import json
+import os
 import time
 import logging
 from openai import OpenAI
@@ -23,7 +24,16 @@ from app.config import settings
 from app.db import get_conn, insert_llm_enrichment_raw
 
 logger = logging.getLogger("llm_enrich")
-client = OpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
+client = OpenAI(
+    api_key=settings.OPENAI_API_KEY,
+    base_url=settings.OPENAI_BASE_URL,
+    max_retries=6,   # SDK backs off exponentially on 429 and honours retry-after
+    timeout=60,
+)
+
+# Pause between LLM calls to stay under the provider's per-minute rate limit
+# (Groq free tier). Override with ENRICH_DELAY_SECONDS in .env.
+ENRICH_DELAY_SECONDS = float(os.getenv("ENRICH_DELAY_SECONDS", "8"))
 
 
 
@@ -103,6 +113,7 @@ def enrich_pending_episodes(batch_size: int = 50) -> dict:
         LEFT JOIN bronze.llm_enrichment_raw l ON l.episode_raw_id = e.id
         WHERE e.fetch_status = 'ok'
           AND l.id IS NULL
+        ORDER BY e.id DESC
         LIMIT :batch_size
         """
     )
@@ -110,7 +121,9 @@ def enrich_pending_episodes(batch_size: int = 50) -> dict:
         rows = conn.execute(query, {"batch_size": batch_size}).fetchall()
 
     processed, failed = 0, 0
-    for row in rows:
+    for i, row in enumerate(rows):
+        if i > 0:
+            time.sleep(ENRICH_DELAY_SECONDS)  # throttle to avoid 429s
         episode_id, raw_json = row[0], row[1]
         title = (raw_json or {}).get("title", "")
         description = (raw_json or {}).get("summary", "")
